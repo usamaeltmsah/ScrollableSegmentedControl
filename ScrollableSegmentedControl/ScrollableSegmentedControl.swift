@@ -37,7 +37,20 @@ public enum ScrollableSegmentedControlSegmentStyle: Int {
             }
         }
     }
-    
+
+    /**
+     A Boolean value that determines if the width of the segment is going to fit the screen width.
+
+     When this value is set to true all segments have the same width which equivalent of the width required to display all the segments on screen.
+     The default value is false.
+     */
+    public var segmentWidthFitScreenSize: Bool = false {
+        didSet {
+            if oldValue != segmentWidthFitScreenSize {
+                setNeedsLayout()
+            }
+        }
+    }
     
     @objc public var segmentStyle:ScrollableSegmentedControlSegmentStyle = .textOnly {
         didSet {
@@ -74,7 +87,7 @@ public enum ScrollableSegmentedControlSegmentStyle: Int {
                     
                     if indexPath != nil {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: {
-                            self.collectionView?.selectItem(at: indexPath, animated: true, scrollPosition: .left)
+                            self.collectionView?.selectItem(at: indexPath, animated: true, scrollPosition: UICollectionView.ScrollPosition.left)
                         })
                     }
                 }
@@ -97,17 +110,6 @@ public enum ScrollableSegmentedControlSegmentStyle: Int {
             reloadSegments()
         }
     }
-
-    fileprivate var _underlineHeight: CGFloat = 4.0
-    @objc public dynamic var underlineHeight: CGFloat {
-        get { return _underlineHeight }
-        set {
-            if newValue != _underlineHeight {
-                _underlineHeight = newValue
-                reloadSegments()
-            }
-        }
-    }
     
     fileprivate var _selectedSegmentContentColor:UIColor?
     @objc public dynamic var selectedSegmentContentColor:UIColor? {
@@ -117,7 +119,10 @@ public enum ScrollableSegmentedControlSegmentStyle: Int {
             reloadSegments()
         }
     }
-    
+
+    @objc public dynamic var badgeYRatio: CGFloat = 0
+    @objc public dynamic var badgeViewSize: CGFloat = 10
+    @objc public dynamic var badgeColor: UIColor = .red
     
     override public init(frame: CGRect) {
         super.init(frame: frame)
@@ -220,28 +225,31 @@ public enum ScrollableSegmentedControlSegmentStyle: Int {
     /**
      Inserts a segment at a specific position in the receiver and gives it a title as content and/or image as content.
      */
-    @objc public func insertSegment(withTitle title: String?, image: UIImage?, at index: Int) {
+    @objc public func insertSegment(withTitle title: String?, image: UIImage?, at index: Int, withBadge: Bool = false) {
         let segment = SegmentData()
         segment.title = title
         segment.image = image?.withRenderingMode(.alwaysTemplate)
+        segment.badge = withBadge
         segmentsData.insert(segment, at: index)
-        
+
         if let str = title {
             calculateLongestTextWidth(text: str)
         }
         reloadSegments()
     }
-    
+
+    @objc public func updateSegmentBadge(at index: Int, withBadge: Bool = false) {
+        let segment = segmentsData[index]
+        segment.badge = withBadge
+
+        reloadSegments()
+    }
+
     /**
      Removes segment at a specific position from the receiver.
      */
-    @objc public func removeSegment(at index: Int){
-        segmentsData.remove(at: index)
-        if(selectedSegmentIndex == index) {
-            selectedSegmentIndex = selectedSegmentIndex - 1
-        } else if(selectedSegmentIndex > segmentsData.count) {
-            selectedSegmentIndex = -1
-        }
+    @objc public func removeSegment(at segment: Int){
+        segmentsData.remove(at: segment)
         reloadSegments()
     }
     
@@ -276,36 +284,34 @@ public enum ScrollableSegmentedControlSegmentStyle: Int {
             }
             
             if selectedSegmentIndex >= 0 {
-                var scrollPossition:UICollectionView.ScrollPosition = .bottom
                 let indexPath = IndexPath(item: selectedSegmentIndex, section: 0)
-                if let atribs = collectionView?.layoutAttributesForItem(at: indexPath) {
-                    let frame = atribs.frame
-                    if frame.origin.x < collectionView!.contentOffset.x {
-                        scrollPossition = .left
-                    } else if frame.origin.x + frame.size.width > (collectionView!.frame.size.width + collectionView!.contentOffset.x) {
-                        scrollPossition = .right
-                    }
-                }
-            
-                collectionView?.selectItem(at: indexPath, animated: true, scrollPosition: scrollPossition)
+                collectionView?.selectItem(at: indexPath, animated: true, scrollPosition: .left)
             } else {
                 if let indexPath = collectionView?.indexPathsForSelectedItems?.first {
                     collectionView?.deselectItem(at: indexPath, animated: true)
                 }
             }
-            
+
             if oldValue != selectedSegmentIndex {
+                collectionView?.layoutIfNeeded()
+                if let item = self.collectionView?.cellForItem(at: IndexPath(item: oldValue, section: 0)) as? ImageOnTopSegmentCollectionViewCell {
+                    item.isHighlighted = false
+                }
                 self.sendActions(for: .valueChanged)
             }
         }
     }
-    
+
     /**
      Configure if the selected segment should have underline. Default value is false.
      */
     @IBInspectable
     @objc public var underlineSelected:Bool = false
+    @objc public var underlineUnselectedColor:UIColor = .clear
+    @objc public var underlineSelectedMargins: CGFloat = 0
+    @objc public var underlineUnselectedMargins: CGFloat = 0
     
+    @objc public var underlineHeight: CGFloat = 3
     // MARK: - Layout management
     
     override public func layoutSubviews() {
@@ -347,8 +353,13 @@ public enum ScrollableSegmentedControlSegmentStyle: Int {
     
     fileprivate func configureSegmentSize() {
         let width:CGFloat
-        
-        if fixedSegmentWidth == true {
+
+        if segmentWidthFitScreenSize {
+            width = UIScreen.main.bounds.width / CGFloat(segmentsData.count)
+
+            flowLayout.estimatedItemSize = CGSize()
+            flowLayout.itemSize = CGSize(width: width, height: frame.size.height)
+        } else if fixedSegmentWidth == true {
             switch segmentStyle {
             case .imageOnLeft:
                 width = longestTextWidth + BaseSegmentCollectionViewCell.imageSize + BaseSegmentCollectionViewCell.imageToTextMargin * 2
@@ -359,7 +370,7 @@ public enum ScrollableSegmentedControlSegmentStyle: Int {
                     width = longestTextWidth
                 }
             }
-            
+
             flowLayout.estimatedItemSize = CGSize()
             flowLayout.itemSize = CGSize(width: width, height: frame.size.height)
         } else {
@@ -399,32 +410,37 @@ public enum ScrollableSegmentedControlSegmentStyle: Int {
         } else {
             segmentData = segmentsData[index]
         }
-        
+
         return segmentData
     }
-    
+
     fileprivate func reloadSegments() {
         if let collectionView_ = collectionView {
             collectionView_.reloadData()
             if selectedSegmentIndex >= 0 {
                 let indexPath = IndexPath(item: selectedSegmentIndex, section: 0)
-                collectionView_.selectItem(at: indexPath, animated: true, scrollPosition: .bottom)
+                collectionView_.selectItem(at: indexPath, animated: true, scrollPosition: .left)
+                collectionView_.layoutIfNeeded()
+                if let item = self.collectionView?.cellForItem(at: indexPath) as? ImageOnTopSegmentCollectionViewCell {
+                    item.isHighlighted = true
+                }
             }
         }
     }
-    
+
     /*
      Private internal classes to be used only by this class.
      */
-    
+
     // MARK: - SegmentData
-    
+
     final private class SegmentData {
         var title:String?
         var normalAttributedTitle:NSAttributedString?
         var highlightedAttributedTitle:NSAttributedString?
         var selectedAttributedTitle:NSAttributedString?
         var image:UIImage?
+        var badge:Bool = false
     }
     
     // MARK : - CollectionViewController
@@ -472,7 +488,11 @@ public enum ScrollableSegmentedControlSegmentStyle: Int {
                 let cell = collectionView.dequeueReusableCell(withReuseIdentifier: CollectionViewController.imageOnTopCellIdentifier, for: indexPath) as! ImageOnTopSegmentCollectionViewCell
                 cell.titleLabel.text = data.title
                 cell.imageView.image = data.image
-                
+                cell.badgeView.isHidden = !data.badge
+                cell.badgeView.frame = CGRect(x: cell.frame.size.width / 2 + segmentedControl.badgeViewSize, y: cell.frame.size.height * segmentedControl.badgeYRatio - segmentedControl.badgeViewSize / 2, width: segmentedControl.badgeViewSize, height: segmentedControl.badgeViewSize)
+                cell.badgeView.layer.cornerRadius = segmentedControl.badgeViewSize / 2
+                cell.badgeView.backgroundColor = segmentedControl.badgeColor
+
                 segmentCell = cell
             case .imageOnLeft:
                 let cell = collectionView.dequeueReusableCell(withReuseIdentifier: CollectionViewController.imageOnLeftCellIdentifier, for: indexPath) as! ImageOnLeftSegmentCollectionViewCell
@@ -481,8 +501,12 @@ public enum ScrollableSegmentedControlSegmentStyle: Int {
                 
                 segmentCell = cell
             }
-            segmentCell.underlineHeight = segmentedControl.underlineHeight
+            
             segmentCell.showUnderline = segmentedControl.underlineSelected
+            segmentCell.underlineUnselectedColor = segmentedControl.underlineUnselectedColor
+            segmentCell.underlineSelectedMargins = segmentedControl.underlineSelectedMargins
+            segmentCell.underlineUnselectedMargins = segmentedControl.underlineUnselectedMargins
+            segmentCell.underlineHeight = segmentedControl.underlineHeight
             if segmentedControl.underlineSelected {
                 segmentCell.tintColor = segmentedControl.tintColor
             }
@@ -543,13 +567,6 @@ public enum ScrollableSegmentedControlSegmentStyle: Int {
         static let defaultTextColor = UIColor.darkGray
         
         var underlineView:UIView?
-        var underlineHeight: CGFloat = 4.0 {
-            didSet {
-                if oldValue != underlineHeight {
-                    setNeedsUpdateConstraints()
-                }
-            }
-        }
         public var contentColor:UIColor?
         public var selectedContentColor:UIColor?
         
@@ -557,6 +574,26 @@ public enum ScrollableSegmentedControlSegmentStyle: Int {
         var highlightedAttributedTitle:NSAttributedString?
         var selectedAttributedTitle:NSAttributedString?
         var variableConstraints = [NSLayoutConstraint]()
+        var underlineUnselectedColor: UIColor?
+        var underlineSelectedMargins: CGFloat = 0 {
+            didSet {
+                updateUnderlineConstraints()
+            }
+        }
+        var underlineUnselectedMargins: CGFloat = 0 {
+            didSet {
+                updateUnderlineConstraints()
+            }
+        }
+        var underlineHeight: CGFloat = 3 {
+            didSet {
+                updateUnderlineConstraints()
+            }
+        }
+
+        var heightConstraint: NSLayoutConstraint?
+        var leadingContraint: NSLayoutConstraint?
+        var trailingContraint: NSLayoutConstraint?
         
         var showUnderline:Bool = false {
             didSet {
@@ -566,8 +603,8 @@ public enum ScrollableSegmentedControlSegmentStyle: Int {
                     } else {
                         underlineView = UIView()
                         underlineView!.tag = 999
-                        underlineView!.backgroundColor = tintColor
-                        underlineView!.isHidden = !isSelected
+                        underlineView!.backgroundColor = isSelected ? tintColor : underlineUnselectedColor
+                        underlineView!.isHidden = false
                         contentView.insertSubview(underlineView!, at: contentView.subviews.count)
                     }
                     
@@ -575,10 +612,10 @@ public enum ScrollableSegmentedControlSegmentStyle: Int {
                 }
             }
         }
-        
+
         override var tintColor: UIColor!{
             didSet{
-                underlineView?.backgroundColor = tintColor
+                underlineView?.backgroundColor = isSelected ? tintColor : underlineUnselectedColor
             }
         }
         
@@ -599,10 +636,22 @@ public enum ScrollableSegmentedControlSegmentStyle: Int {
         private func configureConstraints() {
             if let underline = underlineView {
                 underline.translatesAutoresizingMaskIntoConstraints = false
-                underline.leadingAnchor.constraint(equalTo: contentView.leadingAnchor).isActive = true
-                underline.trailingAnchor.constraint(equalTo: contentView.trailingAnchor).isActive = true
+                heightConstraint = underline.heightAnchor.constraint(equalToConstant: 3)
+                heightConstraint?.isActive = true
+                leadingContraint = underline.leadingAnchor.constraint(equalTo: contentView.leadingAnchor)
+                leadingContraint?.isActive = true
+                trailingContraint = underline.trailingAnchor.constraint(equalTo: contentView.trailingAnchor)
+                trailingContraint?.isActive = true
                 underline.bottomAnchor.constraint(equalTo: contentView.bottomAnchor).isActive = true
+
+                updateUnderlineConstraints()
             }
+        }
+
+        private func updateUnderlineConstraints() {
+            self.leadingContraint?.constant = self.isSelected ? self.underlineSelectedMargins : self.underlineUnselectedMargins
+            self.trailingContraint?.constant = self.isSelected ? -self.underlineSelectedMargins : -self.underlineUnselectedMargins
+            self.heightConstraint?.constant = self.underlineHeight
         }
         
         override func setNeedsUpdateConstraints() {
@@ -610,16 +659,11 @@ public enum ScrollableSegmentedControlSegmentStyle: Int {
             NSLayoutConstraint.deactivate(variableConstraints)
             variableConstraints.removeAll()
         }
-        
-        override var isHighlighted: Bool {
-            didSet {
-                underlineView?.isHidden = !isHighlighted && !isSelected
-            }
-        }
-        
+
         override var isSelected: Bool {
             didSet {
-                underlineView?.isHidden = !isSelected
+                underlineView?.backgroundColor = isSelected ? tintColor : underlineUnselectedColor
+                updateUnderlineConstraints()
             }
         }
     }
@@ -685,10 +729,7 @@ public enum ScrollableSegmentedControlSegmentStyle: Int {
             variableConstraints.append(titleLabel.centerYAnchor.constraint(equalTo: contentView.centerYAnchor))
             variableConstraints.append(titleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: BaseSegmentCollectionViewCell.textPadding))
             variableConstraints.append(titleLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -BaseSegmentCollectionViewCell.textPadding))
-
-            if let underline = underlineView {
-                variableConstraints.append(underline.heightAnchor.constraint(equalToConstant: underlineHeight))
-            }
+            
             NSLayoutConstraint.activate(variableConstraints)
         }
     }
@@ -740,10 +781,6 @@ public enum ScrollableSegmentedControlSegmentStyle: Int {
             variableConstraints.append(imageView.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: BaseSegmentCollectionViewCell.textPadding))
             variableConstraints.append(contentView.trailingAnchor.constraint(greaterThanOrEqualTo: imageView.trailingAnchor, constant: BaseSegmentCollectionViewCell.textPadding))
             
-            if let underline = underlineView {
-                variableConstraints.append(underline.heightAnchor.constraint(equalToConstant: underlineHeight))
-            }
-            
             NSLayoutConstraint.activate(variableConstraints)
         }
     }
@@ -751,6 +788,7 @@ public enum ScrollableSegmentedControlSegmentStyle: Int {
     private class BaseImageSegmentCollectionViewCell: BaseSegmentCollectionViewCell {
         let titleLabel = UILabel()
         let imageView = UIImageView()
+        let badgeView = UIView()
         internal let stackView = UIStackView()
         
         override var contentColor:UIColor? {
@@ -817,7 +855,9 @@ public enum ScrollableSegmentedControlSegmentStyle: Int {
             stackView.addArrangedSubview(titleLabel)
             
             stackView.translatesAutoresizingMaskIntoConstraints = false
+            badgeView.isHidden = true
             contentView.addSubview(stackView)
+            contentView.addSubview(badgeView)
         }
         
         override func updateConstraints() {
@@ -829,10 +869,6 @@ public enum ScrollableSegmentedControlSegmentStyle: Int {
             variableConstraints.append(stackView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor))
             variableConstraints.append(stackView.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: BaseSegmentCollectionViewCell.textPadding))
             variableConstraints.append(contentView.trailingAnchor.constraint(greaterThanOrEqualTo: stackView.trailingAnchor, constant: BaseSegmentCollectionViewCell.textPadding))
-            
-            if let underline = underlineView {
-                variableConstraints.append(underline.heightAnchor.constraint(equalToConstant: underlineHeight))
-            }
             
             NSLayoutConstraint.activate(variableConstraints)
         }
